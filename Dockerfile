@@ -7,7 +7,8 @@ ENV LD_LIBRARY_PATH="/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/o
 
 RUN apt update && apt install -y ffmpeg
 
-# Direct faster-whisper for transcription and language detection.
+# Runtime dependencies only. Model weights are supplied through RunPod's
+# managed Hugging Face cache, not downloaded during the Docker build.
 RUN pip3 install \
     faster-whisper==1.2.1 \
     ctranslate2==4.8.1 \
@@ -17,9 +18,7 @@ RUN pip3 install \
     huggingface-hub==1.24.0 \
     runpod==1.11.0
 
-# Preload both ivrit checkpoints; the full model is active, turbo remains available for fallback/A-B tests.
-RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-ct2")'
-RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-turbo-ct2")'
+# The worker resolves /runpod-volume/huggingface-cache/hub at startup.
 ENV HF_HUB_OFFLINE=1
 
 ADD infer.py .

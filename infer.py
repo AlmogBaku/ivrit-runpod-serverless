@@ -9,9 +9,39 @@ import torch
 from faster_whisper import WhisperModel
 
 MODEL_DEFAULT = "ivrit-ai/whisper-large-v3-ct2"
+HF_CACHE_ROOT = Path("/runpod-volume/huggingface-cache/hub")
 
 _transcription_model = None
 _transcription_model_name = None
+
+
+def _resolve_cached_model(model_id):
+    """Resolve a RunPod-managed Hugging Face snapshot to a local path."""
+    candidate = Path(model_id)
+    if candidate.is_dir():
+        return str(candidate)
+    if "/" not in model_id:
+        raise ValueError(f"model_id must be an org/name identifier: {model_id}")
+
+    org, name = model_id.split("/", 1)
+    model_root = HF_CACHE_ROOT / f"models--{org}--{name}"
+    refs_main = model_root / "refs" / "main"
+    snapshots_dir = model_root / "snapshots"
+
+    if refs_main.is_file():
+        snapshot_hash = refs_main.read_text().strip()
+        snapshot = snapshots_dir / snapshot_hash
+        if snapshot.is_dir():
+            return str(snapshot)
+
+    snapshots = sorted(path for path in snapshots_dir.iterdir() if path.is_dir()) if snapshots_dir.is_dir() else []
+    if snapshots:
+        return str(snapshots[0])
+
+    raise RuntimeError(
+        f"RunPod model cache missing: {model_id}. "
+        "Set the endpoint Model field to this Hugging Face ID and redeploy."
+    )
 
 
 def _audio_path(transcribe_args):
@@ -47,8 +77,9 @@ def _audio_path(transcribe_args):
 def _load_model(model_name):
     global _transcription_model, _transcription_model_name
     if _transcription_model is None or _transcription_model_name != model_name:
-        print(f"Loading faster-whisper model: {model_name}", flush=True)
-        _transcription_model = WhisperModel(model_name, local_files_only=True)
+        model_path = _resolve_cached_model(model_name)
+        print(f"Loading cached faster-whisper model: {model_name} ({model_path})", flush=True)
+        _transcription_model = WhisperModel(model_path, local_files_only=True)
         _transcription_model_name = model_name
     return _transcription_model
 
@@ -77,11 +108,7 @@ def _transcribe(model_name, transcribe_args):
             word_timestamps=False,
         )
         yield [
-            {
-                "start": float(segment.start),
-                "end": float(segment.end),
-                "text": segment.text,
-            }
+            {"start": float(segment.start), "end": float(segment.end), "text": segment.text}
             for segment in segments
         ]
     finally:

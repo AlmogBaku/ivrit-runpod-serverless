@@ -16,6 +16,8 @@ It is part of the [ivrit.ai](https://ivrit.ai) non-profit project.
 
 The fork runs `faster-whisper` directly with the ivrit full `ivrit-ai/whisper-large-v3-ct2` checkpoint. It keeps the RunPod `blob`/`url` input contract, uses `task="transcribe"`, and enables multilingual per-segment detection with `language_detection_threshold=0.7` and `language_detection_segments=2`. Diarization and the ivrit SDK are intentionally not included.
 
+**RunPod model cache:** set the endpoint's Model field to `ivrit-ai/whisper-large-v3-ct2`. RunPod caches the snapshot under `/runpod-volume/huggingface-cache/hub`; the worker loads that local snapshot. The Docker build intentionally does not download model weights, avoiding the 30-minute build timeout. The turbo checkpoint remains supported if separately cached.
+
 ## API: easy deployment through the Runpod hub
 
 If you simply want to use our models via an API, quick deploy is avaialble via the RunPod hub.
