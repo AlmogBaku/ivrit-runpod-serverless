@@ -1,118 +1,113 @@
-import dataclasses
-import queue
-import sys
-import threading
+import base64
+import os
+import tempfile
+import urllib.request
+from pathlib import Path
+
 import runpod
-import ivrit
-import logging
+import torch
+from faster_whisper import WhisperModel
 
-_SENTINEL = object()
-MAX_BATCH_SIZE = 20
+MODEL_DEFAULT = "ivrit-ai/whisper-large-v3-turbo-ct2"
 
-# Global variables to track the currently loaded model
-current_model = None
+_transcription_model = None
+_transcription_model_name = None
 
-def transcribe(job):
-    engine = job['input'].get('engine', 'faster-whisper')
-    model_name = job['input'].get('model', None)
-    is_streaming = job['input'].get('streaming', False)
 
-    if not engine in ['faster-whisper', 'stable-whisper']:
-        yield { "error" : f"engine should be 'faster-whisper' or 'stable-whisper', but is {engine} instead." }
+def _audio_path(transcribe_args):
+    """Materialize blob, URL, or local path for faster-whisper."""
+    blob = transcribe_args.get("blob")
+    url = transcribe_args.get("url")
+    path = transcribe_args.get("path")
+    sources = [value for value in (blob, url, path) if value]
+    if len(sources) != 1:
+        raise ValueError("transcribe_args must contain exactly one of blob, url, or path")
 
-    if not model_name:
-        yield { "error" : "Model not provided." }
+    if path:
+        audio_path = Path(path).expanduser()
+        if not audio_path.is_file():
+            raise FileNotFoundError(str(audio_path))
+        return str(audio_path), None
 
-    # Get the API key from the job input
-    api_key = job['input'].get('api_key', None)
-
-    # Extract transcribe_args from job input
-    transcribe_args = job['input'].get('transcribe_args', None)
-
-    # Validate that transcribe_args contains either blob or url
-    if not transcribe_args:
-        yield { "error" : "transcribe_args field not provided." }
-    
-    if not ('blob' in transcribe_args or 'url' in transcribe_args):
-        yield { "error" : "transcribe_args must contain either 'blob' or 'url' field." }
-
-    stream_gen = transcribe_core(engine, model_name, transcribe_args)
-
-    if is_streaming:
-        for entry in stream_gen:
-            yield entry
+    if blob:
+        data = base64.b64decode(blob, validate=True)
     else:
-        result = [entry for entry in stream_gen]
-        yield { 'result' : result }
+        request = urllib.request.Request(url, headers={"User-Agent": "runpod-stt/1.0"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = response.read()
 
-def transcribe_core(engine, model_name, transcribe_args):
-    print('Transcribing...')
+    if not data:
+        raise ValueError("audio input is empty")
+    handle = tempfile.NamedTemporaryFile(prefix="runpod-audio-", suffix=".audio", delete=False)
+    handle.write(data)
+    handle.close()
+    return handle.name, handle.name
 
-    global current_model
 
-    different_model = (not current_model) or (current_model.engine != engine or current_model.model != model_name)
+def _load_model(model_name):
+    global _transcription_model, _transcription_model_name
+    if _transcription_model is None or _transcription_model_name != model_name:
+        print(f"Loading faster-whisper model: {model_name}", flush=True)
+        _transcription_model = WhisperModel(model_name, local_files_only=True)
+        _transcription_model_name = model_name
+    return _transcription_model
 
-    if different_model:
-        print(f'Loading new model: {engine} with {model_name}')
-        current_model = ivrit.load_model(engine=engine, model=model_name, local_files_only=True)
-    else:
-        print(f'Reusing existing model: {engine} with {model_name}')
 
-    q = queue.Queue()
+def _transcribe(model_name, transcribe_args):
+    audio_path, cleanup_path = _audio_path(transcribe_args)
+    try:
+        model = _load_model(model_name)
+        language = transcribe_args.get("language") or None
+        multilingual = bool(transcribe_args.get("multilingual", True))
+        threshold = float(transcribe_args.get("language_detection_threshold", 0.7))
+        detection_segments = int(transcribe_args.get("language_detection_segments", 2))
+        if not 0.0 <= threshold <= 1.0:
+            raise ValueError("language_detection_threshold must be between 0 and 1")
+        if detection_segments < 1:
+            raise ValueError("language_detection_segments must be at least 1")
 
-    def on_progress(event):
-        q.put({"type": "progress", "data": event})
+        segments, _info = model.transcribe(
+            audio_path,
+            language=language,
+            task="transcribe",
+            multilingual=multilingual,
+            language_detection_threshold=threshold,
+            language_detection_segments=detection_segments,
+            vad_filter=True,
+            word_timestamps=False,
+        )
+        yield [
+            {
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "text": segment.text,
+            }
+            for segment in segments
+        ]
+    finally:
+        if cleanup_path:
+            try:
+                os.unlink(cleanup_path)
+            except FileNotFoundError:
+                pass
 
-    transcribe_args['on_progress'] = on_progress
-    diarize = transcribe_args.get('diarize', False)
 
-    def producer():
-        try:
-            if diarize:
-                res = current_model.transcribe(**transcribe_args)
-                segs = res['segments']
-            else:
-                transcribe_args['stream'] = True
-                segs = current_model.transcribe(**transcribe_args)
-            for s in segs:
-                q.put({"type": "segments", "data": [dataclasses.asdict(s)]})
-        except Exception as e:
-            q.put(e)
-        finally:
-            q.put(_SENTINEL)
-
-    thread = threading.Thread(target=producer, daemon=True)
-    thread.start()
+def handler(job):
+    payload = job.get("input", {})
+    model_name = payload.get("model") or MODEL_DEFAULT
+    transcribe_args = payload.get("transcribe_args")
+    if not isinstance(transcribe_args, dict):
+        yield {"error": "transcribe_args field not provided."}
+        return
 
     try:
-        while True:
-            item = q.get()
-            if item is _SENTINEL:
-                break
-            if isinstance(item, Exception):
-                raise item
+        yield {"result": list(_transcribe(model_name, transcribe_args))}
+    except Exception as exc:
+        print(f"transcription failed: {exc!r}", flush=True)
+        yield {"error": str(exc)}
 
-            batch = [item]
-            while len(batch) < MAX_BATCH_SIZE and not q.empty():
-                try:
-                    more = q.get_nowait()
-                    if more is _SENTINEL:
-                        yield batch
-                        return
-                    if isinstance(more, Exception):
-                        yield batch
-                        raise more
-                    batch.append(more)
-                except queue.Empty:
-                    break
-            yield batch
-    finally:
-        thread.join()
 
-import torch
 if not torch.cuda.is_available():
-    print("GPU health check failed: CUDA not available", flush=True)
-    sys.exit(1)
+    raise RuntimeError("GPU health check failed: CUDA not available")
 
-runpod.serverless.start({"handler": transcribe, "return_aggregate_stream": True})
-
+runpod.serverless.start({"handler": handler, "return_aggregate_stream": True})
