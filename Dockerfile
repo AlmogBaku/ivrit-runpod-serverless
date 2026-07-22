@@ -11,15 +11,11 @@ ENV LD_LIBRARY_PATH="/opt/conda/lib/python3.11/site-packages/nvidia/cudnn/lib:/o
 RUN apt update
 RUN apt install -y ffmpeg
 
-# Install python packages
-RUN pip3 install ivrit[all]==0.2.6 torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 huggingface-hub==0.36.0 runpod
+# Install only the runtime dependencies needed for non-diarized ivrit STT.
+RUN pip3 install ivrit==0.2.6 torch==2.7.1 torchaudio==2.7.1 torchvision==0.22.1 huggingface-hub==0.36.0 runpod
 
-RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-turbo-ct2")'
+# Preload only the model used by this endpoint. Runtime uses local_files_only=True.
 RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-ct2")'
-RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/yi-whisper-large-v3-turbo-ct2")'
-RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("large-v3-turbo")'
-RUN python3 -c 'import pyannote.audio; import torch; from pyannote.audio.core.task import Problem, Resolution, Specifications; torch.serialization.add_safe_globals([Problem, Resolution, Specifications, torch.torch_version.TorchVersion]); p = pyannote.audio.Pipeline.from_pretrained("ivrit-ai/pyannote-speaker-diarization-3.1")'
-RUN python3 -c 'from speechbrain.inference.speaker import EncoderClassifier; EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb")'
 
 # Add your file
 ADD infer.py .
