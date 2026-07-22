@@ -17,7 +17,8 @@ RUN pip3 install \
     huggingface-hub==1.24.0 \
     runpod==1.11.0
 
-# Preload the ivrit transcription model; runtime is offline.
+# Preload both ivrit checkpoints; the full model is active, turbo remains available for fallback/A-B tests.
+RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-ct2")'
 RUN python3 -c 'import faster_whisper; m = faster_whisper.WhisperModel("ivrit-ai/whisper-large-v3-turbo-ct2")'
 ENV HF_HUB_OFFLINE=1
 

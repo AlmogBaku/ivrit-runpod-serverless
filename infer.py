@@ -8,7 +8,7 @@ import runpod
 import torch
 from faster_whisper import WhisperModel
 
-MODEL_DEFAULT = "ivrit-ai/whisper-large-v3-turbo-ct2"
+MODEL_DEFAULT = "ivrit-ai/whisper-large-v3-ct2"
 
 _transcription_model = None
 _transcription_model_name = None

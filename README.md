@@ -14,7 +14,7 @@ It is part of the [ivrit.ai](https://ivrit.ai) non-profit project.
 
 ### AlmogBaku fork runtime
 
-The fork runs `faster-whisper` directly with the ivrit turbo checkpoint. It keeps the RunPod `blob`/`url` input contract, uses `task="transcribe"`, and enables multilingual per-segment detection with `language_detection_threshold=0.7` and `language_detection_segments=2`. Diarization and the ivrit SDK are intentionally not included.
+The fork runs `faster-whisper` directly with the ivrit full `ivrit-ai/whisper-large-v3-ct2` checkpoint. It keeps the RunPod `blob`/`url` input contract, uses `task="transcribe"`, and enables multilingual per-segment detection with `language_detection_threshold=0.7` and `language_detection_segments=2`. Diarization and the ivrit SDK are intentionally not included.
 
 ## API: easy deployment through the Runpod hub
 
