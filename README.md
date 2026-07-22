@@ -12,6 +12,10 @@ It provides us with credits, which we can then use to provide better services.
 This project provides a serverless solution for transcribing Hebrew audio files. It leverages runpod.io's infrastructure to process audio files efficiently and return transcriptions.
 It is part of the [ivrit.ai](https://ivrit.ai) non-profit project.
 
+### AlmogBaku fork runtime
+
+The fork runs `faster-whisper` directly with the ivrit turbo checkpoint. It keeps the RunPod `blob`/`url` input contract, uses `task="transcribe"`, and enables multilingual per-segment detection with `language_detection_threshold=0.7` and `language_detection_segments=2`. Diarization and the ivrit SDK are intentionally not included.
+
 ## API: easy deployment through the Runpod hub
 
 If you simply want to use our models via an API, quick deploy is avaialble via the RunPod hub.
